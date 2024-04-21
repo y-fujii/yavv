@@ -1,0 +1,17 @@
+[package]
+name = "yavv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "*"
+winit = "*"
+wgpu = "*"
+tinyjson = "*"
+zune-core = "*"
+zune-image = { version = "*", default-features = false, features = [ "png", "jpeg", "metadata", "simd" ] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
