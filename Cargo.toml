@@ -1,6 +1,5 @@
 [package]
 name = "yavv"
-version = "0.1.0"
 edition = "2021"
 
 [dependencies]
@@ -10,6 +9,11 @@ wgpu = "*"
 tinyjson = "*"
 zune-core = "*"
 zune-image = { version = "*", default-features = false, features = [ "png", "jpeg", "metadata", "simd" ] }
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+overflow-checks = false
 
 [profile.release]
 lto = true

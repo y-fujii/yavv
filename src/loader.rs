@@ -175,10 +175,14 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
             let image = match json_image.get("bufferView") {
                 Some(view) => {
                     let (offset, length, _) = *views.get(get_usize(view)?)?;
-                    let image =
-                        zune_image::image::Image::read(&blob[offset..offset + length], Default::default()).ok()?;
+                    let image = zune_image::image::Image::read(
+                        &blob[offset..offset + length],
+                        zune_core::options::DecoderOptions::new_fast()
+                            .png_set_add_alpha_channel(true)
+                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGBA),
+                    )
+                    .ok()?;
                     let frame = image.frames_ref().get(0)?;
-                    // XXX: image.has_alpha()
                     Some(scene::Image {
                         dims: [image.dimensions().0 as u32, image.dimensions().1 as u32],
                         depth: 8, // XXX

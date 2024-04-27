@@ -8,6 +8,7 @@ struct MaterialUniform {
 
 pub struct GpuResource {
     pub material_layout: wgpu::BindGroupLayout,
+    pub _empty_buffer: wgpu::Buffer,
     pub sampler: wgpu::Sampler,
     pub blob: Option<wgpu::Buffer>,
     pub images: Vec<Option<(wgpu::TextureView, wgpu::Texture)>>,
@@ -48,10 +49,16 @@ impl GpuResource {
             label: None,
         });
 
+        let empty_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 0,
+            usage: wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
@@ -60,11 +67,44 @@ impl GpuResource {
 
         GpuResource {
             material_layout: material_layout,
+            _empty_buffer: empty_buffer,
             sampler: sampler,
             blob: None,
             images: Vec::new(),
             materials: Vec::new(),
         }
+    }
+
+    pub fn vertex_layouts(&self) -> [wgpu::VertexBufferLayout; 3] {
+        [
+            wgpu::VertexBufferLayout {
+                array_stride: 4 * 3,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                }],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 4 * 3,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                }],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 4 * 2,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
+                }],
+            },
+        ]
     }
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &scene::Glb) {
@@ -152,6 +192,34 @@ impl GpuResource {
                 label: None,
             });
             self.materials.push((group, buffer));
+        }
+    }
+
+    pub fn draw_mesh<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, glb: &scene::Glb, mesh: usize, material_id: u32) {
+        let blob = self.blob.as_ref().unwrap();
+        for primitive in glb.meshes[mesh].primitives.iter() {
+            let Some(position) = primitive.attributes.position else {
+                continue;
+            };
+            let Some(normal) = primitive.attributes.normal else {
+                continue;
+            };
+            let Some(texcoord_0) = primitive.attributes.texcoord_0 else {
+                continue;
+            };
+            let Some(indices) = primitive.indices else { continue };
+            let index_fmt = match glb.accessors[indices].component_type {
+                5123 => wgpu::IndexFormat::Uint16,
+                5125 => wgpu::IndexFormat::Uint32,
+                _ => continue,
+            };
+            let Some(material) = primitive.material else { continue };
+            pass.set_bind_group(material_id, &self.materials[material].0, &[]);
+            pass.set_vertex_buffer(0, blob.slice(glb.accessors[position].offset as u64..));
+            pass.set_vertex_buffer(1, blob.slice(glb.accessors[normal].offset as u64..));
+            pass.set_vertex_buffer(2, blob.slice(glb.accessors[texcoord_0].offset as u64..));
+            pass.set_index_buffer(blob.slice(glb.accessors[indices].offset as u64..), index_fmt);
+            pass.draw_indexed(0..glb.accessors[indices].count as u32, 0, 0..1);
         }
     }
 }

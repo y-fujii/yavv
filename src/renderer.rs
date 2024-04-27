@@ -2,12 +2,14 @@ use crate::*;
 use nalgebra::{Matrix4, Quaternion, UnitQuaternion, Vector3};
 
 pub struct Renderer {
+    sample_count: u32,
     viewport_scale: [f32; 2],
     pipeline: wgpu::RenderPipeline,
-    _empty_buffer: wgpu::Buffer,
-    // XXX
+    color_texture: wgpu::Texture,
+    color_texture_view: wgpu::TextureView,
     depth_texture: wgpu::Texture,
-    pub depth_texture_view: wgpu::TextureView,
+    depth_texture_view: wgpu::TextureView,
+    gpu: gpu_resource::GpuResource,
 }
 
 #[repr(C)]
@@ -16,11 +18,11 @@ struct VsConstants {
 }
 
 impl Renderer {
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        gpu: &gpu_resource::GpuResource,
-    ) -> Result<Self, Box<dyn error::Error>> {
+    pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+    pub fn new(device: &wgpu::Device, sample_count: u32) -> Result<Self, Box<dyn error::Error>> {
+        let gpu = gpu_resource::GpuResource::new(&device);
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&gpu.material_layout],
@@ -36,40 +38,16 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: 4 * 3,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x3,
-                        }],
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: 4 * 3,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x3,
-                        }],
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: 4 * 2,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32x2,
-                        }],
-                    },
-                ],
+                buffers: &gpu.vertex_layouts(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[Some(format.into())],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: Self::FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             primitive: Default::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -79,26 +57,30 @@ impl Renderer {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
         });
 
-        let empty_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-
-        let (depth_texture, depth_texture_view) = Self::create_depth_texture(device, 1, 1);
+        let (color_tex, color_view, depth_tex, depth_view) = Self::create_textures(device, 1, 1, sample_count);
 
         Ok(Renderer {
+            sample_count: sample_count,
             viewport_scale: [1.0, 1.0],
             pipeline: pipeline,
-            _empty_buffer: empty_buffer,
-            depth_texture: depth_texture,
-            depth_texture_view: depth_texture_view,
+            color_texture: color_tex,
+            color_texture_view: color_view,
+            depth_texture: depth_tex,
+            depth_texture_view: depth_view,
+            gpu: gpu,
         })
+    }
+
+    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, glb: &scene::Glb) {
+        self.gpu.update(&device, &queue, &glb);
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, w: u32, h: u32) {
@@ -107,15 +89,36 @@ impl Renderer {
         let nf = f32::sqrt(wf * hf);
         self.viewport_scale = [nf / wf, nf / hf];
 
-        let (depth_texture, depth_texture_view) = Self::create_depth_texture(device, w, h);
-        self.depth_texture = depth_texture;
-        self.depth_texture_view = depth_texture_view;
+        let (color_tex, color_view, depth_tex, depth_view) = Self::create_textures(device, w, h, self.sample_count);
+        self.color_texture = color_tex;
+        self.color_texture_view = color_view;
+        self.depth_texture = depth_tex;
+        self.depth_texture_view = depth_view;
     }
 
-    pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, glb: &scene::Glb, gpu: &'a gpu_resource::GpuResource) {
+    pub fn render<'a>(&'a self, encoder: &mut wgpu::CommandEncoder, glb: &scene::Glb, view: &wgpu::TextureView) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.color_texture_view,
+                resolve_target: Some(view),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_texture_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
         pass.set_pipeline(&self.pipeline);
         for n in glb.roots.iter() {
-            self.render_nodes(pass, glb, gpu, *n, &Matrix4::identity());
+            self.render_nodes(&mut pass, glb, *n, &Matrix4::identity());
         }
     }
 
@@ -123,7 +126,6 @@ impl Renderer {
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
         glb: &scene::Glb,
-        gpu: &'a gpu_resource::GpuResource,
         root: usize,
         transform: &Matrix4<f32>,
     ) {
@@ -133,44 +135,6 @@ impl Renderer {
         let ms = Matrix4::new_nonuniform_scaling(&Vector3::from(root_node.scale));
         let transform = transform * mt * mr * ms;
         if let Some(mesh) = root_node.mesh {
-            self.render_mesh(pass, glb, gpu, mesh, &transform);
-        }
-        for n in root_node.children.iter() {
-            self.render_nodes(pass, glb, gpu, *n, &transform);
-        }
-    }
-
-    pub fn render_mesh<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        glb: &scene::Glb,
-        gpu: &'a gpu_resource::GpuResource,
-        mesh: usize,
-        transform: &Matrix4<f32>,
-    ) {
-        for primitive in glb.meshes[mesh].primitives.iter() {
-            let Some(position) = primitive.attributes.position else {
-                continue;
-            };
-            let Some(normal) = primitive.attributes.normal else {
-                continue;
-            };
-            let Some(texcoord_0) = primitive.attributes.texcoord_0 else {
-                continue;
-            };
-            let Some(indices) = primitive.indices else { continue };
-            let index_fmt = match glb.accessors[indices].component_type {
-                5123 => wgpu::IndexFormat::Uint16,
-                5125 => wgpu::IndexFormat::Uint32,
-                _ => continue,
-            };
-            pass.set_bind_group(0, &gpu.materials[primitive.material.unwrap()].0, &[]);
-            let blob = gpu.blob.as_ref().unwrap();
-            pass.set_vertex_buffer(0, blob.slice(glb.accessors[position].offset as u64..));
-            pass.set_vertex_buffer(1, blob.slice(glb.accessors[normal].offset as u64..));
-            pass.set_vertex_buffer(2, blob.slice(glb.accessors[texcoord_0].offset as u64..));
-            pass.set_index_buffer(blob.slice(glb.accessors[indices].offset as u64..), index_fmt);
-
             let projection = Matrix4::from([
                 [self.viewport_scale[0], 0.0, 0.0, 0.0],
                 [0.0, self.viewport_scale[1], 0.0, 0.0],
@@ -187,27 +151,49 @@ impl Renderer {
                 projection: *(projection * camera_inv * transform).as_ref(),
             };
             pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, unsafe { utils::as_bytes(&buf) });
-
-            pass.draw_indexed(0..glb.accessors[indices].count as u32, 0, 0..1);
+            self.gpu.draw_mesh(pass, glb, mesh, 0);
+        }
+        for n in root_node.children.iter() {
+            self.render_nodes(pass, glb, *n, &transform);
         }
     }
 
-    fn create_depth_texture(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+    fn create_textures(
+        device: &wgpu::Device,
+        w: u32,
+        h: u32,
+        sample_count: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
+        let size = wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        };
+
+        let color_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
+            size: size,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: sample_count,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            format: Self::FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
+        let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: size,
+            mip_level_count: 1,
+            sample_count: sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        (color_tex, color_view, depth_tex, depth_view)
     }
 }
