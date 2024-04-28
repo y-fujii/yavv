@@ -1,3 +1,4 @@
+use nalgebra::{Matrix4, UnitQuaternion, Vector3};
 use std::*;
 
 #[derive(Debug)]
@@ -46,23 +47,22 @@ pub struct Primitive {
 #[derive(Debug)]
 pub struct Mesh {
     pub primitives: Vec<Primitive>,
-    //pub weights: Vec<f32>,
+    pub weights: Option<Vec<f32>>,
 }
 
 #[derive(Debug)]
 pub struct Node {
     pub name: String,
     pub children: Vec<usize>,
-    pub translation: [f32; 3],
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
+    pub translation: Vector3<f32>,
+    pub rotation: UnitQuaternion<f32>,
+    pub scale: Vector3<f32>,
     pub mesh: Option<usize>,
 }
 
 #[derive(Debug)]
 pub struct Image {
-    pub dims: [u32; 2],
-    pub depth: usize,
+    pub dims: [u32; 3],
     pub buffer: Vec<u8>,
 }
 
@@ -74,4 +74,26 @@ pub struct Glb {
     pub roots: Vec<usize>,
     pub blob: Vec<u8>,
     pub images: Vec<Option<Image>>,
+}
+
+impl default::Default for Node {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            children: Vec::new(),
+            translation: nalgebra::zero(),
+            rotation: UnitQuaternion::identity(),
+            scale: Vector3::new(1.0, 1.0, 1.0),
+            mesh: None,
+        }
+    }
+}
+
+impl Node {
+    pub fn transform(&self) -> Matrix4<f32> {
+        let mt = Matrix4::new_translation(&self.translation);
+        let mr = self.rotation.to_homogeneous();
+        let ms = Matrix4::new_nonuniform_scaling(&self.scale);
+        mt * mr * ms
+    }
 }

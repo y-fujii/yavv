@@ -1,5 +1,5 @@
 use crate::*;
-use nalgebra::{Matrix4, Quaternion, UnitQuaternion, Vector3};
+use nalgebra::Matrix4;
 
 pub struct Renderer {
     sample_count: u32,
@@ -14,6 +14,7 @@ pub struct Renderer {
 
 #[repr(C)]
 struct VsConstants {
+    transform: [[f32; 4]; 4],
     projection: [[f32; 4]; 4],
 }
 
@@ -53,14 +54,14 @@ impl Renderer {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: wgpu::CompareFunction::Greater,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,
                 mask: !0,
-                alpha_to_coverage_enabled: false,
+                alpha_to_coverage_enabled: true,
             },
             multiview: None,
         });
@@ -96,7 +97,13 @@ impl Renderer {
         self.depth_texture_view = depth_view;
     }
 
-    pub fn render<'a>(&'a self, encoder: &mut wgpu::CommandEncoder, glb: &scene::Glb, view: &wgpu::TextureView) {
+    pub fn render<'a>(
+        &'a self,
+        encoder: &mut wgpu::CommandEncoder,
+        glb: &scene::Glb,
+        view: &wgpu::TextureView,
+        camera: &scene::Node,
+    ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &self.color_texture_view,
@@ -109,7 +116,7 @@ impl Renderer {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.depth_texture_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -117,8 +124,10 @@ impl Renderer {
             ..Default::default()
         });
         pass.set_pipeline(&self.pipeline);
+
+        let camera_matrix = camera.transform().try_inverse().unwrap();
         for n in glb.roots.iter() {
-            self.render_nodes(&mut pass, glb, *n, &Matrix4::identity());
+            self.render_nodes(&mut pass, glb, *n, &camera_matrix);
         }
     }
 
@@ -130,25 +139,17 @@ impl Renderer {
         transform: &Matrix4<f32>,
     ) {
         let root_node = &glb.nodes[root];
-        let mt = Matrix4::new_translation(&Vector3::from(root_node.translation));
-        let mr = UnitQuaternion::from_quaternion(Quaternion::from(root_node.rotation)).to_homogeneous();
-        let ms = Matrix4::new_nonuniform_scaling(&Vector3::from(root_node.scale));
-        let transform = transform * mt * mr * ms;
+        let transform = transform * root_node.transform();
         if let Some(mesh) = root_node.mesh {
             let projection = Matrix4::from([
                 [self.viewport_scale[0], 0.0, 0.0, 0.0],
                 [0.0, self.viewport_scale[1], 0.0, 0.0],
-                [0.0, 0.0, 0.1, 0.0],
-                [0.0, 0.0, 0.5, 1.0],
-            ]);
-            let camera_inv = Matrix4::from([
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
                 [0.0, 0.0, 1.0, 0.0],
-                [0.0, -1.0, 0.0, 1.0],
             ]);
             let buf = VsConstants {
-                projection: *(projection * camera_inv * transform).as_ref(),
+                transform: *transform.as_ref(),
+                projection: *projection.as_ref(),
             };
             pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, unsafe { utils::as_bytes(&buf) });
             self.gpu.draw_mesh(pass, glb, mesh, 0);

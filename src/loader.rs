@@ -1,5 +1,6 @@
 use crate::*;
 use collections::HashMap;
+use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 fn u32_from_slice(buf: &[u8]) -> u32 {
     u32::from_le_bytes(buf[..4].try_into().unwrap())
@@ -19,6 +20,32 @@ fn get_vec32f<const N: usize>(json: &tinyjson::JsonValue) -> Option<[f32; N]> {
         dst[i] = *json[i].get::<f64>()? as f32;
     }
     Some(dst)
+}
+
+fn load_attributes(json_attributes: &tinyjson::JsonValue) -> Option<scene::Attributes> {
+    let json_attributes: &HashMap<_, _> = json_attributes.get()?;
+    let position = match json_attributes.get("POSITION") {
+        Some(e) => Some(get_usize(e)?),
+        None => None,
+    };
+    let normal = match json_attributes.get("NORMAL") {
+        Some(e) => Some(get_usize(e)?),
+        None => None,
+    };
+    let texcoord_0 = match json_attributes.get("TEXCOORD_0") {
+        Some(e) => Some(get_usize(e)?),
+        None => None,
+    };
+    let texcoord_1 = match json_attributes.get("TEXCOORD_1") {
+        Some(e) => Some(get_usize(e)?),
+        None => None,
+    };
+    Some(scene::Attributes {
+        position: position,
+        normal: normal,
+        texcoord_0: texcoord_0,
+        texcoord_1: texcoord_1,
+    })
 }
 
 fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Glb> {
@@ -76,22 +103,16 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
         let mut primitives = Vec::new();
         for json_primitive in json_mesh.get("primitives")?.get::<Vec<_>>()? {
             let json_primitive: &HashMap<_, _> = json_primitive.get()?;
-            let json_attributes: &HashMap<_, _> = json_primitive.get("attributes")?.get()?;
-            let position = match json_attributes.get("POSITION") {
-                Some(e) => Some(get_usize(e)?),
-                None => None,
-            };
-            let normal = match json_attributes.get("NORMAL") {
-                Some(e) => Some(get_usize(e)?),
-                None => None,
-            };
-            let texcoord_0 = match json_attributes.get("TEXCOORD_0") {
-                Some(e) => Some(get_usize(e)?),
-                None => None,
-            };
-            let texcoord_1 = match json_attributes.get("TEXCOORD_1") {
-                Some(e) => Some(get_usize(e)?),
-                None => None,
+            let attributes = load_attributes(json_primitive.get("attributes")?)?;
+            let targets = match json_primitive.get("targets") {
+                Some(json_targets) => {
+                    let mut targets = Vec::new();
+                    for json_target in json_targets.get::<Vec<_>>()? {
+                        targets.push(load_attributes(json_target)?);
+                    }
+                    targets
+                }
+                None => Vec::new(),
             };
             let indices = match json_primitive.get("indices") {
                 Some(e) => Some(get_usize(e)?),
@@ -101,20 +122,27 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
                 Some(e) => Some(get_usize(e)?),
                 None => None,
             };
-            dbg!(texcoord_1);
             primitives.push(scene::Primitive {
-                attributes: scene::Attributes {
-                    position: position,
-                    normal: normal,
-                    texcoord_0: texcoord_0,
-                    texcoord_1: texcoord_1,
-                },
-                targets: Vec::new(),
+                attributes: attributes,
+                targets: targets,
                 indices: indices,
                 material: material,
             });
         }
-        meshes.push(scene::Mesh { primitives: primitives });
+        let weights = match json_mesh.get("weights") {
+            Some(json_weights) => {
+                let mut weights = Vec::new();
+                for json_weight in json_weights.get::<Vec<_>>()? {
+                    weights.push(*json_weight.get::<f64>()? as f32);
+                }
+                Some(weights)
+            }
+            None => None,
+        };
+        meshes.push(scene::Mesh {
+            primitives: primitives,
+            weights: weights,
+        });
     }
 
     let mut nodes = Vec::new();
@@ -153,9 +181,9 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
         nodes.push(scene::Node {
             name: name.to_string(),
             children: children,
-            translation: translation,
-            rotation: rotation,
-            scale: scale,
+            translation: Vector3::from(translation),
+            rotation: UnitQuaternion::from_quaternion(Quaternion::from(rotation)),
+            scale: Vector3::from(scale),
             mesh: mesh,
         });
     }
@@ -175,6 +203,7 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
             let image = match json_image.get("bufferView") {
                 Some(view) => {
                     let (offset, length, _) = *views.get(get_usize(view)?)?;
+                    /*
                     let image = zune_image::image::Image::read(
                         &blob[offset..offset + length],
                         zune_core::options::DecoderOptions::new_fast()
@@ -184,9 +213,14 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
                     .ok()?;
                     let frame = image.frames_ref().get(0)?;
                     Some(scene::Image {
-                        dims: [image.dimensions().0 as u32, image.dimensions().1 as u32],
-                        depth: 8, // XXX
+                        dims: [image.dimensions().0 as u32, image.dimensions().1 as u32, 4],
                         buffer: frame.flatten(zune_core::colorspace::ColorSpace::RGBA),
+                    })
+                    */
+                    let image = image::load_from_memory(&blob[offset..offset + length]).ok()?;
+                    Some(scene::Image {
+                        dims: [image.width(), image.height(), 4],
+                        buffer: image.into_rgba8().into_vec(),
                     })
                 }
                 None => None,
@@ -224,7 +258,6 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
                                 Some(e) => get_usize(e)?,
                                 None => 0,
                             };
-                            dbg!(texcoord);
                             Some(scene::Texture {
                                 // XXX
                                 wrap_s: true,

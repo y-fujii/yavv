@@ -1,3 +1,4 @@
+use nalgebra::Vector3;
 use std::*;
 mod blocking;
 mod loader;
@@ -69,27 +70,28 @@ impl<'a> App<'a> {
 
     pub fn render(&self) {
         let frame = self.surface.get_current_texture().unwrap();
-        let view = frame.texture.create_view(&Default::default());
+        let frame_view = frame.texture.create_view(&Default::default());
+
+        let time = time::Instant::now();
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.renderer.render(&mut encoder, &self.glb, &view);
+        self.renderer.render(
+            &mut encoder,
+            &self.glb,
+            &frame_view,
+            &scene::Node {
+                translation: Vector3::new(0.0, 1.0, -3.0),
+                ..Default::default()
+            },
+        );
         self.queue.submit(Some(encoder.finish()));
+        println!("{:?}", time.elapsed());
+
         frame.present();
     }
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    //node::test();
-    /*
-    for entry in fs::read_dir("models/")? {
-        let _glb = loader::load(fs::File::open(entry?.path())?)?;
-        //dbg!(_glb.accessors);
-    }
-    */
-
-    //let glb = loader::load(fs::File::open("models/AliciaSolid_vrm-0.51.vrm")?)?;
-    //let glb = loader::load(fs::File::open("models/vroid_10.vrm")?)?;
-    let glb = loader::load(fs::File::open("../Kyoko_Original.vrm")?)?;
-    //let glb = loader::load(fs::File::open("models/hakka.vrm")?)?;
+    let glb = loader::load(fs::File::open(env::args().skip(1).next().unwrap())?)?;
 
     let looper = winit::event_loop::EventLoop::new()?;
     let window = winit::window::WindowBuilder::new()
@@ -98,7 +100,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .build(&looper)?;
     let mut app = App::new(&window, glb)?;
 
-    let mut time = time::Instant::now();
     looper.run(|ev, elwt| {
         use winit::event::*;
         match ev {
@@ -109,8 +110,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::Resized(size) => app.resize(size.width, size.height),
                 WindowEvent::RedrawRequested => {
-                    println!("{:?}", time.elapsed());
-                    time = time::Instant::now();
                     app.render();
                     window.request_redraw();
                 }

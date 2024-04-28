@@ -1,14 +1,14 @@
 use crate::*;
 use wgpu::util::DeviceExt;
 
-#[repr(C)]
+#[repr(C, align(16))]
 struct MaterialUniform {
     base_color_factor: [f32; 4],
+    base_color_texcoord: u32,
 }
 
 pub struct GpuResource {
     pub material_layout: wgpu::BindGroupLayout,
-    pub _empty_buffer: wgpu::Buffer,
     pub sampler: wgpu::Sampler,
     pub blob: Option<wgpu::Buffer>,
     pub images: Vec<Option<(wgpu::TextureView, wgpu::Texture)>>,
@@ -49,13 +49,6 @@ impl GpuResource {
             label: None,
         });
 
-        let empty_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
@@ -67,7 +60,6 @@ impl GpuResource {
 
         GpuResource {
             material_layout: material_layout,
-            _empty_buffer: empty_buffer,
             sampler: sampler,
             blob: None,
             images: Vec::new(),
@@ -75,7 +67,7 @@ impl GpuResource {
         }
     }
 
-    pub fn vertex_layouts(&self) -> [wgpu::VertexBufferLayout; 3] {
+    pub fn vertex_layouts(&self) -> [wgpu::VertexBufferLayout; 4] {
         [
             wgpu::VertexBufferLayout {
                 array_stride: 4 * 3,
@@ -101,6 +93,15 @@ impl GpuResource {
                 attributes: &[wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
+                }],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 4 * 2,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 3,
                     format: wgpu::VertexFormat::Float32x2,
                 }],
             },
@@ -162,6 +163,7 @@ impl GpuResource {
         for material in scene.materials.iter() {
             let uniform = MaterialUniform {
                 base_color_factor: material.base_color_factor,
+                base_color_texcoord: material.base_color_texture.as_ref().unwrap().texcoord as u32,
             };
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
@@ -204,8 +206,13 @@ impl GpuResource {
             let Some(normal) = primitive.attributes.normal else {
                 continue;
             };
-            let Some(texcoord_0) = primitive.attributes.texcoord_0 else {
-                continue;
+            let texcoord_0 = match primitive.attributes.texcoord_0 {
+                Some(texcoord_0) => texcoord_0,
+                None => position, // dummy.
+            };
+            let texcoord_1 = match primitive.attributes.texcoord_1 {
+                Some(texcoord_1) => texcoord_1,
+                None => position, // dummy.
             };
             let Some(indices) = primitive.indices else { continue };
             let index_fmt = match glb.accessors[indices].component_type {
@@ -218,6 +225,7 @@ impl GpuResource {
             pass.set_vertex_buffer(0, blob.slice(glb.accessors[position].offset as u64..));
             pass.set_vertex_buffer(1, blob.slice(glb.accessors[normal].offset as u64..));
             pass.set_vertex_buffer(2, blob.slice(glb.accessors[texcoord_0].offset as u64..));
+            pass.set_vertex_buffer(3, blob.slice(glb.accessors[texcoord_1].offset as u64..));
             pass.set_index_buffer(blob.slice(glb.accessors[indices].offset as u64..), index_fmt);
             pass.draw_indexed(0..glb.accessors[indices].count as u32, 0, 0..1);
         }
