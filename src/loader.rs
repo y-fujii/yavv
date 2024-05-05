@@ -174,9 +174,9 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
             Some(e) => get_vec32f(e)?,
             None => [1.0, 1.0, 1.0],
         };
-        let mesh = match json_node.get("mesh") {
-            Some(e) => Some(get_usize(e)?),
-            None => None,
+        let element = match json_node.get("mesh") {
+            Some(e) => scene::Element::Mesh(get_usize(e)?),
+            None => scene::Element::None,
         };
         nodes.push(scene::Node {
             name: name.to_string(),
@@ -184,7 +184,7 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
             translation: Vector3::from(translation),
             rotation: UnitQuaternion::from_quaternion(Quaternion::from(rotation)),
             scale: Vector3::from(scale),
-            mesh: mesh,
+            element: element,
         });
     }
 
@@ -203,20 +203,6 @@ fn load_root(json_root: &tinyjson::JsonValue, blob: Vec<u8>) -> Option<scene::Gl
             let image = match json_image.get("bufferView") {
                 Some(view) => {
                     let (offset, length, _) = *views.get(get_usize(view)?)?;
-                    /*
-                    let image = zune_image::image::Image::read(
-                        &blob[offset..offset + length],
-                        zune_core::options::DecoderOptions::new_fast()
-                            .png_set_add_alpha_channel(true)
-                            .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGBA),
-                    )
-                    .ok()?;
-                    let frame = image.frames_ref().get(0)?;
-                    Some(scene::Image {
-                        dims: [image.dimensions().0 as u32, image.dimensions().1 as u32, 4],
-                        buffer: frame.flatten(zune_core::colorspace::ColorSpace::RGBA),
-                    })
-                    */
                     let image = image::load_from_memory(&blob[offset..offset + length]).ok()?;
                     Some(scene::Image {
                         dims: [image.width(), image.height(), 4],

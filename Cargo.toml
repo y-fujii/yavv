@@ -7,18 +7,16 @@ nalgebra = "*"
 winit = "*"
 wgpu = "*"
 tinyjson = "*"
-#zune-core = "*"
-#zune-image = { version = "*", default-features = false, features = [ "png", "jpeg", "metadata", "simd" ] }
 image = { version = "*", default-features = false, features = ["jpeg", "png"] }
 
 [profile.dev]
 opt-level = 1
 
 [profile.dev.package."*"]
-debug = false
 overflow-checks = false
+debug = false
 
 [profile.release]
-lto = true
 codegen-units = 1
+lto = true
 strip = true

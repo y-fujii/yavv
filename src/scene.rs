@@ -51,13 +51,19 @@ pub struct Mesh {
 }
 
 #[derive(Debug)]
+pub enum Element {
+    None,
+    Mesh(usize),
+}
+
+#[derive(Debug)]
 pub struct Node {
     pub name: String,
     pub children: Vec<usize>,
     pub translation: Vector3<f32>,
     pub rotation: UnitQuaternion<f32>,
     pub scale: Vector3<f32>,
-    pub mesh: Option<usize>,
+    pub element: Element,
 }
 
 #[derive(Debug)]
@@ -84,7 +90,7 @@ impl default::Default for Node {
             translation: nalgebra::zero(),
             rotation: UnitQuaternion::identity(),
             scale: Vector3::new(1.0, 1.0, 1.0),
-            mesh: None,
+            element: Element::None,
         }
     }
 }

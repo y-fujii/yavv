@@ -1,9 +1,9 @@
 use crate::*;
-use nalgebra::Matrix4;
+use nalgebra::{Matrix4, Vector4};
 
 pub struct Renderer {
     sample_count: u32,
-    viewport_scale: [f32; 2],
+    projection_scale: Vector4<f32>,
     pipeline: wgpu::RenderPipeline,
     color_texture: wgpu::Texture,
     color_texture_view: wgpu::TextureView,
@@ -13,9 +13,10 @@ pub struct Renderer {
 }
 
 #[repr(C)]
-struct VsConstants {
-    transform: [[f32; 4]; 4],
-    projection: [[f32; 4]; 4],
+struct VsConsts {
+    m_position: [[f32; 4]; 4],
+    m_normal: [[f32; 4]; 3],
+    projection_scale: [f32; 4],
 }
 
 impl Renderer {
@@ -29,7 +30,7 @@ impl Renderer {
             bind_group_layouts: &[&gpu.material_layout],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStages::VERTEX,
-                range: 0..mem::size_of::<VsConstants>() as u32,
+                range: 0..mem::size_of::<VsConsts>() as u32,
             }],
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
@@ -70,7 +71,7 @@ impl Renderer {
 
         Ok(Renderer {
             sample_count: sample_count,
-            viewport_scale: [1.0, 1.0],
+            projection_scale: Vector4::new(1.0, 1.0, 1.0, f32::powi(0.5, 32)),
             pipeline: pipeline,
             color_texture: color_tex,
             color_texture_view: color_view,
@@ -88,13 +89,19 @@ impl Renderer {
         let wf = w as f32;
         let hf = h as f32;
         let nf = f32::sqrt(wf * hf);
-        self.viewport_scale = [nf / wf, nf / hf];
+        self.projection_scale[0] = nf / wf;
+        self.projection_scale[1] = nf / hf;
 
         let (color_tex, color_view, depth_tex, depth_view) = Self::create_textures(device, w, h, self.sample_count);
         self.color_texture = color_tex;
         self.color_texture_view = color_view;
         self.depth_texture = depth_tex;
         self.depth_texture_view = depth_view;
+    }
+
+    // XXX
+    pub fn set_projection_scale(&mut self, s: f32) {
+        self.projection_scale[2] = s;
     }
 
     pub fn render<'a>(
@@ -125,9 +132,9 @@ impl Renderer {
         });
         pass.set_pipeline(&self.pipeline);
 
-        let camera_matrix = camera.transform().try_inverse().unwrap();
+        let transform = camera.transform().try_inverse().unwrap();
         for n in glb.roots.iter() {
-            self.render_nodes(&mut pass, glb, *n, &camera_matrix);
+            self.render_nodes(&mut pass, glb, *n, &transform);
         }
     }
 
@@ -140,18 +147,13 @@ impl Renderer {
     ) {
         let root_node = &glb.nodes[root];
         let transform = transform * root_node.transform();
-        if let Some(mesh) = root_node.mesh {
-            let projection = Matrix4::from([
-                [self.viewport_scale[0], 0.0, 0.0, 0.0],
-                [0.0, self.viewport_scale[1], 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ]);
-            let buf = VsConstants {
-                transform: *transform.as_ref(),
-                projection: *projection.as_ref(),
+        if let scene::Element::Mesh(mesh) = root_node.element {
+            let buf = VsConsts {
+                m_position: *transform.as_ref(),
+                m_normal: *transform.fixed_columns::<3>(0).as_ref(), // XXX
+                projection_scale: *self.projection_scale.as_ref(),
             };
-            pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, unsafe { utils::as_bytes(&buf) });
+            unsafe { pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, utils::as_bytes(&buf)) }
             self.gpu.draw_mesh(pass, glb, mesh, 0);
         }
         for n in root_node.children.iter() {
