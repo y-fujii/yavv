@@ -1,23 +1,71 @@
 use nalgebra::Vector3;
 use std::*;
+use winit::{event, event_loop, window};
 mod blocking;
 mod gpu_resource;
 mod loader;
-mod node;
+//mod node;
 mod renderer;
 mod scene;
 mod utils;
 
-pub struct App<'a> {
-    surface: wgpu::Surface<'a>,
+struct App {
+    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: renderer::Renderer,
     glb: scene::Glb,
 }
 
-impl<'a> App<'a> {
-    pub fn new(window: &'a winit::window::Window, glb: scene::Glb) -> Result<Self, Box<dyn error::Error>> {
+struct AppHandler {
+    window: Option<sync::Arc<window::Window>>,
+    app: Option<App>,
+    glb: Option<scene::Glb>,
+}
+
+impl AppHandler {
+    fn new(glb: scene::Glb) -> Self {
+        Self {
+            window: None,
+            app: None,
+            glb: Some(glb),
+        }
+    }
+}
+
+impl winit::application::ApplicationHandler for AppHandler {
+    fn resumed(&mut self, event_loop: &event_loop::ActiveEventLoop) {
+        let window = sync::Arc::new(
+            event_loop
+                .create_window(window::Window::default_attributes().with_visible(false))
+                .unwrap(),
+        );
+        self.window = Some(window.clone());
+        self.app = Some(App::new(window.clone(), self.glb.take().unwrap()).unwrap());
+        window.set_visible(true);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &event_loop::ActiveEventLoop,
+        window_id: window::WindowId,
+        event: event::WindowEvent,
+    ) {
+        if window_id != self.window.as_ref().unwrap().id() {
+            return;
+        }
+        let app = self.app.as_mut().unwrap();
+        match event {
+            event::WindowEvent::CloseRequested => event_loop.exit(),
+            event::WindowEvent::Resized(size) => app.resize(size.width, size.height),
+            event::WindowEvent::RedrawRequested => app.render(),
+            _ => (),
+        }
+    }
+}
+
+impl App {
+    pub fn new(window: sync::Arc<window::Window>, glb: scene::Glb) -> Result<Self, Box<dyn error::Error>> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             //backends: wgpu::Backends::DX12,
             flags: wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER,
@@ -68,7 +116,7 @@ impl<'a> App<'a> {
                 height: h,
                 present_mode: wgpu::PresentMode::AutoVsync,
                 desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
                 view_formats: Vec::new(),
             },
         );
@@ -107,25 +155,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         glb
     };
 
-    let looper = winit::event_loop::EventLoop::new()?;
-    let window = winit::window::WindowBuilder::new().with_visible(false).build(&looper)?;
-    let mut app = App::new(&window, glb)?;
-
-    looper.run(|ev, target| {
-        use winit::event::*;
-        match ev {
-            Event::NewEvents(StartCause::Init) => {
-                window.set_visible(true);
-            }
-            Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
-                WindowEvent::CloseRequested => target.exit(),
-                WindowEvent::Resized(size) => app.resize(size.width, size.height),
-                WindowEvent::RedrawRequested => app.render(),
-                _ => (),
-            },
-            _ => (),
-        }
-    })?;
+    event_loop::EventLoop::new()?.run_app(&mut AppHandler::new(glb))?;
 
     Ok(())
 }
