@@ -9,69 +9,29 @@ mod renderer;
 mod scene;
 mod utils;
 
-struct App {
+struct WgpuWindow {
+    window: sync::Arc<window::Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    renderer: renderer::Renderer,
+}
+
+struct App {
+    window: Option<WgpuWindow>,
+    renderer: Option<renderer::Renderer>,
     glb: scene::Glb,
 }
 
-struct AppHandler {
-    window: Option<sync::Arc<window::Window>>,
-    app: Option<App>,
-    glb: Option<scene::Glb>,
-}
-
-impl AppHandler {
-    fn new(glb: scene::Glb) -> Self {
-        Self {
-            window: None,
-            app: None,
-            glb: Some(glb),
-        }
-    }
-}
-
-impl winit::application::ApplicationHandler for AppHandler {
-    fn resumed(&mut self, event_loop: &event_loop::ActiveEventLoop) {
-        let window = sync::Arc::new(
-            event_loop
-                .create_window(window::Window::default_attributes().with_visible(false))
-                .unwrap(),
-        );
-        self.window = Some(window.clone());
-        self.app = Some(App::new(window.clone(), self.glb.take().unwrap()).unwrap());
-        window.set_visible(true);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &event_loop::ActiveEventLoop,
-        window_id: window::WindowId,
-        event: event::WindowEvent,
-    ) {
-        if window_id != self.window.as_ref().unwrap().id() {
-            return;
-        }
-        let app = self.app.as_mut().unwrap();
-        match event {
-            event::WindowEvent::CloseRequested => event_loop.exit(),
-            event::WindowEvent::Resized(size) => app.resize(size.width, size.height),
-            event::WindowEvent::RedrawRequested => app.render(),
-            _ => (),
-        }
-    }
-}
-
-impl App {
-    pub fn new(window: sync::Arc<window::Window>, glb: scene::Glb) -> Result<Self, Box<dyn error::Error>> {
+impl WgpuWindow {
+    pub fn new(event_loop: &event_loop::ActiveEventLoop) -> Result<Self, Box<dyn error::Error>> {
+        let window =
+            sync::Arc::new(event_loop.create_window(window::Window::default_attributes().with_visible(false))?);
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             //backends: wgpu::Backends::DX12,
             flags: wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER,
             ..Default::default()
         });
-        let surface = instance.create_surface(window)?;
+        let surface = instance.create_surface(window.clone())?;
         let adapter = blocking::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
@@ -90,28 +50,22 @@ impl App {
             },
             None,
         ))?;
+        window.set_visible(true);
 
-        let mut renderer = renderer::Renderer::new(&device, 4)?;
-        renderer.update(&device, &queue, &glb);
-        renderer.set_projection_scale(1.0 / 3.0);
-
-        Ok(App {
+        Ok(Self {
+            window: window,
             surface: surface,
             device: device,
             queue: queue,
-            renderer: renderer,
-            glb: glb,
         })
     }
 
-    pub fn resize(&mut self, w: u32, h: u32) {
-        let w = w.max(1);
-        let h = h.max(1);
+    pub fn resize(&mut self, w: u32, h: u32, format: wgpu::TextureFormat) {
         self.surface.configure(
             &self.device,
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: renderer::Renderer::FORMAT,
+                format: format,
                 width: w,
                 height: h,
                 present_mode: wgpu::PresentMode::AutoVsync,
@@ -120,29 +74,73 @@ impl App {
                 view_formats: Vec::new(),
             },
         );
-        self.renderer.resize(&self.device, w, h);
+    }
+}
+
+impl App {
+    fn new(glb: scene::Glb) -> Self {
+        Self {
+            window: None,
+            renderer: None,
+            glb: glb,
+        }
+    }
+}
+
+impl winit::application::ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &event_loop::ActiveEventLoop) {
+        let window = WgpuWindow::new(event_loop).unwrap();
+        let mut renderer = renderer::Renderer::new(&window.device, 4).unwrap();
+        renderer.update(&window.device, &window.queue, &self.glb);
+        renderer.set_projection_scale(1.0 / 3.0);
+        self.window = Some(window);
+        self.renderer = Some(renderer);
     }
 
-    pub fn render(&self) {
-        let frame = self.surface.get_current_texture().unwrap();
-        let frame_view = frame.texture.create_view(&Default::default());
+    fn window_event(
+        &mut self,
+        event_loop: &event_loop::ActiveEventLoop,
+        window_id: window::WindowId,
+        event: event::WindowEvent,
+    ) {
+        let window = self.window.as_mut().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
+        if window_id != window.window.id() {
+            return;
+        }
+        match event {
+            event::WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            event::WindowEvent::Resized(size) => {
+                let w = size.width.max(1);
+                let h = size.height.max(1);
+                window.resize(w, h, renderer::Renderer::FORMAT);
+                renderer.resize(&window.device, w, h);
+            }
+            event::WindowEvent::RedrawRequested => {
+                let frame = window.surface.get_current_texture().unwrap();
+                let frame_view = frame.texture.create_view(&Default::default());
 
-        let time = time::Instant::now();
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.renderer.render(
-            &mut encoder,
-            &self.glb,
-            &frame_view,
-            &scene::Node {
-                translation: Vector3::new(0.0, 0.75, -3.0),
-                ..Default::default()
-            },
-        );
-        let command_buffer = encoder.finish();
-        println!("{:?}", time.elapsed());
+                let time = time::Instant::now();
+                let mut encoder = window.device.create_command_encoder(&Default::default());
+                renderer.render(
+                    &mut encoder,
+                    &self.glb,
+                    &frame_view,
+                    &scene::Node {
+                        translation: Vector3::new(0.0, 0.75, -3.0),
+                        ..Default::default()
+                    },
+                );
+                let command_buffer = encoder.finish();
+                println!("{:?}", time.elapsed());
 
-        self.queue.submit(Some(command_buffer));
-        frame.present();
+                window.queue.submit(Some(command_buffer));
+                frame.present();
+            }
+            _ => (),
+        }
     }
 }
 
@@ -155,7 +153,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         glb
     };
 
-    event_loop::EventLoop::new()?.run_app(&mut AppHandler::new(glb))?;
+    event_loop::EventLoop::new()?.run_app(&mut App::new(glb))?;
 
     Ok(())
 }
