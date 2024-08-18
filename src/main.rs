@@ -39,7 +39,6 @@ impl WgpuWindow {
         .ok_or("request_adapter()")?;
         let (device, queue) = blocking::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
-                label: None,
                 required_features: wgpu::Features::PUSH_CONSTANTS
                     | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
                     | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
@@ -47,6 +46,7 @@ impl WgpuWindow {
                     max_push_constant_size: 128,
                     ..Default::default()
                 },
+                ..Default::default()
             },
             None,
         ))?;

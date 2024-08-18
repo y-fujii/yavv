@@ -67,6 +67,7 @@ impl Renderer {
                 alpha_to_coverage_enabled: true,
             },
             multiview: None,
+            cache: None,
         });
 
         let (color_tex, color_view, depth_tex, depth_view) = Self::create_textures(device, 1, 1, sample_count);
