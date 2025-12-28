@@ -54,7 +54,7 @@ impl GpuResource {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -67,7 +67,7 @@ impl GpuResource {
         }
     }
 
-    pub fn vertex_layouts(&self) -> [wgpu::VertexBufferLayout; 4] {
+    pub fn vertex_layouts<'a>(&'a self) -> [wgpu::VertexBufferLayout<'a>; 4] {
         [
             wgpu::VertexBufferLayout {
                 array_stride: 4 * 3,
@@ -137,14 +137,14 @@ impl GpuResource {
                     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
                     queue.write_texture(
-                        wgpu::ImageCopyTexture {
+                        wgpu::TexelCopyTextureInfo {
                             texture: &texture,
                             mip_level: 0,
                             origin: wgpu::Origin3d::ZERO,
                             aspect: wgpu::TextureAspect::All,
                         },
                         &image.buffer,
-                        wgpu::ImageDataLayout {
+                        wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(4 * image.dims[0]),
                             rows_per_image: Some(image.dims[1]),

@@ -1,4 +1,4 @@
-struct VsConsts {
+struct Immediate {
 	m_position: mat4x3<f32>,
 	m_normal: mat3x3<f32>,
 	projection_scale: vec4<f32>,
@@ -51,7 +51,7 @@ fn hash2(pos: vec2<f32>) -> f32 {
 	return 0x1.0p-32 * f32(fmix32(u32(pos.x) ^ (u32(pos.y) << 16u)));
 }
 
-var<push_constant> vs_consts: VsConsts;
+var<immediate> imm: Immediate;
 @group(0) @binding(0) var<uniform> material: Material;
 @group(0) @binding(1) var base_color_texture: texture_2d<f32>;
 @group(0) @binding(2) var base_color_sampler: sampler;
@@ -63,11 +63,11 @@ var<push_constant> vs_consts: VsConsts;
 	@location(3) texcoord_1: vec2<f32>
 ) -> VertexToFragment {
 	var vtf: VertexToFragment;
-	vtf.position = vs_consts.m_position * vec4(position, 1.0);
-	vtf.normal = vs_consts.m_normal * normal;
+	vtf.position = imm.m_position * vec4(position, 1.0);
+	vtf.normal = imm.m_normal * normal;
 	vtf.texcoord_0 = texcoord_0;
 	vtf.texcoord_1 = texcoord_1;
-	vtf.builtin_position = (vs_consts.projection_scale * vec4(vtf.position, 1.0)).xywz;
+	vtf.builtin_position = (imm.projection_scale * vec4(vtf.position, 1.0)).xywz;
 	return vtf;
 }
 

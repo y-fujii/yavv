@@ -1,4 +1,4 @@
-use nalgebra::Vector3;
+use nalgebra::{UnitQuaternion, Vector3};
 use std::*;
 use winit::{event, event_loop, window};
 mod blocking;
@@ -26,7 +26,7 @@ impl WgpuWindow {
     pub fn new(event_loop: &event_loop::ActiveEventLoop) -> Result<Self, Box<dyn error::Error>> {
         let window =
             sync::Arc::new(event_loop.create_window(window::Window::default_attributes().with_visible(false))?);
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             //backends: wgpu::Backends::DX12,
             flags: wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER,
             ..Default::default()
@@ -35,21 +35,17 @@ impl WgpuWindow {
         let adapter = blocking::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
-        }))
-        .ok_or("request_adapter()")?;
-        let (device, queue) = blocking::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::PUSH_CONSTANTS
-                    | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-                    | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-                required_limits: wgpu::Limits {
-                    max_push_constant_size: 128,
-                    ..Default::default()
-                },
+        }))?;
+        let (device, queue) = blocking::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::IMMEDIATES
+                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            required_limits: wgpu::Limits {
+                max_immediate_size: 128,
                 ..Default::default()
             },
-            None,
-        ))?;
+            ..Default::default()
+        }))?;
         window.set_visible(true);
 
         Ok(Self {
@@ -129,7 +125,11 @@ impl winit::application::ApplicationHandler for App {
                     &self.glb,
                     &frame_view,
                     &scene::Node {
-                        translation: Vector3::new(0.0, 0.75, -3.0),
+                        //translation: Vector3::new(0.0, 0.75, -3.0),
+                        translation: Vector3::new(0.0, 1.0, 2.0),
+                        //rotation: UnitQuaternion::from_euler_angles(f32::consts::PI / 20.0, f32::consts::PI, 0.0),
+                        rotation: UnitQuaternion::from_euler_angles(f32::consts::PI / -20.0, 0.0, 0.0),
+                        scale: Vector3::new(1.0, 1.0, -0.75),
                         ..Default::default()
                     },
                 );

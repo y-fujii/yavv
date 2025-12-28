@@ -28,10 +28,7 @@ impl Renderer {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&gpu.material_layout],
-            push_constant_ranges: &[wgpu::PushConstantRange {
-                stages: wgpu::ShaderStages::VERTEX,
-                range: 0..mem::size_of::<VsConsts>() as u32,
-            }],
+            immediate_size: mem::size_of::<VsConsts>() as u32,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -39,13 +36,13 @@ impl Renderer {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: None,
                 compilation_options: Default::default(),
                 buffers: &gpu.vertex_layouts(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: None,
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: Self::FORMAT,
@@ -66,7 +63,7 @@ impl Renderer {
                 mask: !0,
                 alpha_to_coverage_enabled: true,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -117,6 +114,7 @@ impl Renderer {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &self.color_texture_view,
+                depth_slice: None,
                 resolve_target: Some(view),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -156,7 +154,7 @@ impl Renderer {
                 m_normal: *transform.fixed_columns::<3>(0).as_ref(), // XXX
                 projection_scale: *self.projection_scale.as_ref(),
             };
-            unsafe { pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, utils::as_bytes(&buf)) }
+            unsafe { pass.set_immediates(0, utils::as_bytes(&buf)) }
             self.gpu.draw_mesh(pass, glb, mesh, 0);
         }
         for n in root_node.children.iter() {
