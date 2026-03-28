@@ -27,7 +27,7 @@ impl Renderer {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&gpu.material_layout],
+            bind_group_layouts: &[Some(&gpu.material_layout)],
             immediate_size: mem::size_of::<VsConsts>() as u32,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
@@ -53,8 +53,8 @@ impl Renderer {
             primitive: Default::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Greater,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),

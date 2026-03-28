@@ -26,10 +26,9 @@ impl WgpuWindow {
     pub fn new(event_loop: &event_loop::ActiveEventLoop) -> Result<Self, Box<dyn error::Error>> {
         let window =
             sync::Arc::new(event_loop.create_window(window::Window::default_attributes().with_visible(false))?);
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            //backends: wgpu::Backends::DX12,
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             flags: wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(event_loop.owned_display_handle()))
         });
         let surface = instance.create_surface(window.clone())?;
         let adapter = blocking::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -115,7 +114,9 @@ impl winit::application::ApplicationHandler for App {
                 renderer.resize(&window.device, w, h);
             }
             event::WindowEvent::RedrawRequested => {
-                let frame = window.surface.get_current_texture().unwrap();
+                let wgpu::CurrentSurfaceTexture::Success(frame) = window.surface.get_current_texture() else {
+                    return;
+                };
                 let frame_view = frame.texture.create_view(&Default::default());
 
                 let time = time::Instant::now();

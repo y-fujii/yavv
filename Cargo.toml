@@ -3,18 +3,16 @@ name = "yavv"
 edition = "2024"
 
 [dependencies]
-nalgebra = "*"
-winit = "*"
-wgpu = "*"
-tinyjson = "*"
-image = { version = "*", default-features = false, features = ["jpeg", "png"] }
-
-[profile.dev]
-opt-level = 1
+nalgebra = { version = "*", default-features = false, features = ["std"] }
+winit    = { version = "*", default-features = false, features = ["rwh_06", "wayland"] }
+wgpu     = { version = "*", default-features = false, features = ["dx12", "metal", "vulkan", "wgsl"] }
+tinyjson = { version = "*", default-features = false }
+image    = { version = "*", default-features = false, features = ["jpeg", "png"] }
 
 [profile.dev.package."*"]
 overflow-checks = false
 debug = false
+opt-level = 1
 
 [profile.release]
 codegen-units = 1
